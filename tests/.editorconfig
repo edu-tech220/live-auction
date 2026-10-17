@@ -1,0 +1,6 @@
+# Reglas específicas de proyectos de prueba (se combina con el .editorconfig raíz).
+[*.cs]
+# Convención de nombres de prueba: Metodo_condicion_resultado.
+dotnet_diagnostic.CA1707.severity = none
+# Las pruebas no son API pública ni librería: ConfigureAwait no aplica.
+dotnet_diagnostic.CA2007.severity = none

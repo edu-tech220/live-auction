@@ -1,0 +1,3 @@
+# Normaliza fin de línea en el repo (LF) y respeta el del sistema al hacer checkout.
+* text=auto
+*.sh text eol=lf
