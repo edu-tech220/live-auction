@@ -38,9 +38,9 @@ jobs:
       LIVEAUCTION_TEST_CONNECTION: "Server=localhost,1433;Database=LiveAuction_Tests;User Id=sa;Password=Ci_Passw0rd_2026!;Encrypt=True;TrustServerCertificate=True"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -62,7 +62,7 @@ jobs:
 
       - name: Publicar resultados
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: TestResults/
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Crear .env de CI
         run: |
