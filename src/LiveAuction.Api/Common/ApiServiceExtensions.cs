@@ -72,6 +72,21 @@ public static class ApiServiceExtensions
                 };
             });
 
+        // Microsoft.IdentityModel valida la expiración con DateTime.UtcNow. El token se emite con
+        // TimeProvider; para que emitir y validar usen el MISMO reloj (y las pruebas puedan
+        // controlarlo), el validador de vigencia se basa también en TimeProvider.
+        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+            .Configure<TimeProvider>((options, clock) =>
+            {
+                var skew = options.TokenValidationParameters.ClockSkew;
+                options.TokenValidationParameters.LifetimeValidator = (notBefore, expires, _, _) =>
+                {
+                    var now = clock.GetUtcNow().UtcDateTime;
+                    return (notBefore is null || notBefore.Value <= now + skew)
+                        && (expires is null || expires.Value > now - skew);
+                };
+            });
+
         services.AddAuthorizationBuilder()
             .AddPolicy(AuthPolicies.Admin, p => p.RequireAuthenticatedUser().RequireRole("Admin"))
             // Todo endpoint sin atributo exige login: olvidar [Authorize] no deja nada abierto.
