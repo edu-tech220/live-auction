@@ -54,7 +54,9 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
-if (app.Environment.IsDevelopment())
+// Swagger: siempre en Development; en otros entornos solo si se habilita explícitamente
+// (p. ej. la demo con Docker Compose). En producción real se deja apagado.
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.MapOpenApi().AllowAnonymous();
     app.UseSwaggerUI(o =>
@@ -63,10 +65,9 @@ if (app.Environment.IsDevelopment())
         o.DocumentTitle = "Live Auction API";
     });
 }
-else
-{
+
+if (!app.Environment.IsDevelopment())
     app.UseHsts();
-}
 
 app.Use(async (context, next) =>
 {

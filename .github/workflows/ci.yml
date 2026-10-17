@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build y pruebas
+    runs-on: ubuntu-latest
+
+    # SQL Server real para las pruebas de integración (rowversion, índices únicos, transacciones).
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Contenedor efímero de CI: esta contraseña no protege nada real.
+          MSSQL_SA_PASSWORD: "Ci_Passw0rd_2026!"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 20s
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      LIVEAUCTION_TEST_CONNECTION: "Server=localhost,1433;Database=LiveAuction_Tests;User Id=sa;Password=Ci_Passw0rd_2026!;Encrypt=True;TrustServerCertificate=True"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restaurar
+        run: dotnet restore LiveAuction.slnx
+
+      - name: Compilar (warnings = errores)
+        run: dotnet build LiveAuction.slnx -c Release --no-restore
+
+      - name: Pruebas unitarias
+        run: >
+          dotnet test tests/LiveAuction.UnitTests -c Release --no-build
+          --logger "trx;LogFileName=unit.trx" --collect:"XPlat Code Coverage" --results-directory TestResults/unit
+
+      - name: Pruebas de integración (SQL Server real)
+        run: >
+          dotnet test tests/LiveAuction.IntegrationTests -c Release --no-build
+          --logger "trx;LogFileName=integration.trx" --collect:"XPlat Code Coverage" --results-directory TestResults/integration
+
+      - name: Publicar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+
+  docker:
+    name: Docker Compose (smoke test)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Crear .env de CI
+        run: |
+          cat > .env <<EOF
+          SQL_SA_PASSWORD=Ci_Passw0rd_2026!
+          JWT_SIGNING_KEY=ci-signing-key-only-for-pipeline-0123456789abcdef
+          ADMIN_EMAIL=admin@liveauction.local
+          ADMIN_PASSWORD=Admin_Ci_2026!
+          DEMO_PASSWORD=Demo_Ci_2026!
+          EOF
+
+      - name: Construir y levantar
+        run: docker compose up -d --build
+
+      - name: Esperar a la API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:5080/health; then echo; exit 0; fi
+            sleep 3
+          done
+          docker compose logs api
+          exit 1
+
+      - name: Smoke test de punta a punta
+        run: |
+          set -e
+          curl -fs http://localhost:8080/index.html > /dev/null
+          TOKEN=$(curl -fs -X POST http://localhost:5080/api/auth/login -H 'Content-Type: application/json' \
+            -d '{"email":"ana@demo.local","password":"Demo_Ci_2026!"}' | jq -r .accessToken)
+          # El worker activa las subastas demo en segundos: esperar a que haya una activa.
+          for i in $(seq 1 20); do
+            AUCTION=$(curl -fs "http://localhost:5080/api/auctions?status=Active" | jq '.items[0].id // empty')
+            [ -n "$AUCTION" ] && break
+            sleep 2
+          done
+          test -n "$AUCTION"
+          MIN=$(curl -fs "http://localhost:5080/api/auctions/$AUCTION" | jq '.minimumNextBid')
+          curl -fs -X POST "http://localhost:5080/api/auctions/$AUCTION/bids" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d "{\"amount\": $MIN}" | jq .
+          echo "Puja registrada en la subasta $AUCTION"
+
+      - name: Logs si falla
+        if: failure()
+        run: docker compose logs
+
+      - name: Apagar
+        if: always()
+        run: docker compose down -v
