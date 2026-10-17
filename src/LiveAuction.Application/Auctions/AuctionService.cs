@@ -40,7 +40,7 @@ public sealed class AuctionService(
         // Orden útil para el usuario: activas primero (las que cierran antes arriba), luego las
         // programadas, luego el historial.
         var items = await auctions
-            .OrderBy(a => a.Status)
+            .OrderBy(a => a.Status == AuctionStatus.Active ? 0 : a.Status == AuctionStatus.Scheduled ? 1 : 2) // CASE WHEN en SQL
             .ThenBy(a => a.EndsAt)
             .ThenBy(a => a.Id)
             .Skip((query.Page - 1) * query.PageSize)

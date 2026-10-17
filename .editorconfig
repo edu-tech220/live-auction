@@ -394,3 +394,7 @@ dotnet_naming_style.s_camelcase.capitalization = camel_case
 [*.cs]
 # Solución 100% C#: "Error" no es palabra reservada en C# (sí en VB).
 dotnet_diagnostic.CA1716.severity = none
+
+# Migraciones de EF Core: código generado, no se analiza.
+[**/Migrations/*.cs]
+generated_code = true
