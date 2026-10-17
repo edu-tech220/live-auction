@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- Decisión pragmática: los casos de uso consultan con LINQ sobre DbSet (IApplicationDbContext)
+         en vez de esconder EF Core detrás de repositorios genéricos. Ver docs/decisions.md. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LiveAuction.Domain\LiveAuction.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LiveAuction.UnitTests" />
+  </ItemGroup>
+</Project>
