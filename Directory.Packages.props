@@ -1,24 +1,24 @@
 <Project>
-  <!-- Central Package Management: las versiones viven aquí, los .csproj solo dicen QUÉ paquete usan. -->
+  <!-- Central Package Management: versions live here; .csproj files only say WHICH packages they use. -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <!-- Permite fijar versiones de dependencias TRANSITIVAS (las que traen otros paquetes). -->
+    <!-- Allows pinning TRANSITIVE dependency versions (the ones brought in by other packages). -->
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Persistencia -->
+    <!-- Persistence -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.13" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.13" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" />
-    <!-- Autenticación -->
+    <!-- Authentication -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.13" />
-    <!-- API / documentación -->
+    <!-- API / documentation -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.3.0" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.13" />
-    <!-- Seguridad: SqlClient trae Pkcs 9.0.11 con vulnerabilidades conocidas (GHSA-846f-f764-76mx). -->
+    <!-- Security: SqlClient brings Pkcs 9.0.11, which has known vulnerabilities (GHSA-846f-f764-76mx). -->
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
-    <!-- Pruebas -->
+    <!-- Tests -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />

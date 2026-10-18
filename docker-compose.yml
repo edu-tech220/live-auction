@@ -1,5 +1,5 @@
-# Entorno completo de demostración: SQL Server + API + frontend.
-#   cp .env.example .env   (y cambia los valores)
+# Full demo environment: SQL Server + API + frontend.
+#   cp .env.example .env   (then change the values)
 #   docker compose up --build
 # Frontend: http://localhost:8080   API/Swagger: http://localhost:5080/swagger
 
@@ -8,7 +8,7 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Define SQL_SA_PASSWORD en .env}
+      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Set SQL_SA_PASSWORD in .env}
     ports:
       - "1433:1433"
     volumes:
@@ -30,20 +30,20 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Default: "Server=sqlserver,1433;Database=LiveAuction;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True"
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Define JWT_SIGNING_KEY en .env}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Set JWT_SIGNING_KEY in .env}
       Database__MigrateOnStartup: "true"
       Database__Seed__Enabled: "true"
       Database__Seed__AdminEmail: ${ADMIN_EMAIL:-admin@liveauction.local}
-      Database__Seed__AdminPassword: ${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+      Database__Seed__AdminPassword: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       Database__Seed__DemoPassword: ${DEMO_PASSWORD:-}
       Cors__AllowedOrigins__0: "http://localhost:8080"
       Swagger__Enabled: "true"
-    # Salud: GET http://localhost:5080/health (la imagen runtime no incluye curl/wget,
-    # por eso se verifica desde fuera del contenedor).
+    # Health: GET http://localhost:5080/health (the runtime image has no curl/wget,
+    # so it is checked from outside the container).
     ports:
       - "5080:8080"
 
-  # Frontend React (repo independiente): Compose lo construye directo desde GitHub.
+  # React frontend (separate repository): Compose builds it straight from GitHub.
   frontend:
     build:
       context: https://github.com/edu-tech220/live-auction-web.git#main
