@@ -1,15 +1,15 @@
 <Project>
-  <!-- Se aplica a TODOS los proyectos de la solución. -->
+  <!-- Applies to EVERY project in the solution. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <!-- Calidad: cualquier advertencia del compilador rompe el build. -->
+    <!-- Quality: any compiler warning breaks the build. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
-    <!-- Comentarios XML no son obligatorios en todos los miembros. -->
+    <!-- XML doc comments are not required on every member. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 </Project>

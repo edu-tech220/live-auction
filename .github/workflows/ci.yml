@@ -12,16 +12,16 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build y pruebas
+    name: Build and test
     runs-on: ubuntu-latest
 
-    # SQL Server real para las pruebas de integración (rowversion, índices únicos, transacciones).
+    # Real SQL Server for the integration tests (rowversion, unique indexes, transactions).
     services:
       sqlserver:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: "Y"
-          # Contenedor efímero de CI: esta contraseña no protege nada real.
+          # Ephemeral CI container: this password protects nothing real.
           MSSQL_SA_PASSWORD: "Ci_Passw0rd_2026!"
         ports:
           - 1433:1433
@@ -44,23 +44,23 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Restaurar
+      - name: Restore
         run: dotnet restore LiveAuction.slnx
 
-      - name: Compilar (warnings = errores)
+      - name: Build (warnings as errors)
         run: dotnet build LiveAuction.slnx -c Release --no-restore
 
-      - name: Pruebas unitarias
+      - name: Unit tests
         run: >
           dotnet test tests/LiveAuction.UnitTests -c Release --no-build
           --logger "trx;LogFileName=unit.trx" --collect:"XPlat Code Coverage" --results-directory TestResults/unit
 
-      - name: Pruebas de integración (SQL Server real)
+      - name: Integration tests (real SQL Server)
         run: >
           dotnet test tests/LiveAuction.IntegrationTests -c Release --no-build
           --logger "trx;LogFileName=integration.trx" --collect:"XPlat Code Coverage" --results-directory TestResults/integration
 
-      - name: Publicar resultados
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Crear .env de CI
+      - name: Create CI .env
         run: |
           cat > .env <<EOF
           SQL_SA_PASSWORD=Ci_Passw0rd_2026!
@@ -84,10 +84,10 @@ jobs:
           DEMO_PASSWORD=Demo_Ci_2026!
           EOF
 
-      - name: Construir y levantar
+      - name: Build and start
         run: docker compose up -d --build
 
-      - name: Esperar a la API
+      - name: Wait for the API
         run: |
           for i in $(seq 1 60); do
             if curl -fs http://localhost:5080/health; then echo; exit 0; fi
@@ -96,13 +96,13 @@ jobs:
           docker compose logs api
           exit 1
 
-      - name: Smoke test de punta a punta
+      - name: End-to-end smoke test
         run: |
           set -e
           curl -fs http://localhost:8080/index.html > /dev/null
           TOKEN=$(curl -fs -X POST http://localhost:5080/api/auth/login -H 'Content-Type: application/json' \
             -d '{"email":"ana@demo.local","password":"Demo_Ci_2026!"}' | jq -r .accessToken)
-          # El worker activa las subastas demo en segundos: esperar a que haya una activa.
+          # The worker activates the demo auctions within seconds: wait for an active one.
           for i in $(seq 1 20); do
             AUCTION=$(curl -fs "http://localhost:5080/api/auctions?status=Active" | jq '.items[0].id // empty')
             [ -n "$AUCTION" ] && break
@@ -112,12 +112,12 @@ jobs:
           MIN=$(curl -fs "http://localhost:5080/api/auctions/$AUCTION" | jq '.minimumNextBid')
           curl -fs -X POST "http://localhost:5080/api/auctions/$AUCTION/bids" -H "Authorization: Bearer $TOKEN" \
             -H 'Content-Type: application/json' -d "{\"amount\": $MIN}" | jq .
-          echo "Puja registrada en la subasta $AUCTION"
+          echo "Bid placed on auction $AUCTION"
 
-      - name: Logs si falla
+      - name: Logs on failure
         if: failure()
         run: docker compose logs
 
-      - name: Apagar
+      - name: Shut down
         if: always()
         run: docker compose down -v
