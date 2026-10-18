@@ -1,135 +1,138 @@
-# Decisiones técnicas
+# Technical decisions
 
-Registro de las decisiones de diseño más importantes, con su contexto, las alternativas
-evaluadas y sus consecuencias. Es lo que se defendería en una revisión técnica o una entrevista.
+A record of the most important design decisions: their context, the alternatives that were
+evaluated and their consequences.
 
 ---
 
-## 1. Arquitectura por capas (Domain, Application, Infrastructure, Api)
+## 1. Layered architecture (Domain, Application, Infrastructure, Api)
 
-**Contexto.** El sistema tiene reglas de negocio no triviales (pujas, tiempos, cierre) y dos
-canales de entrada (REST y SignalR) que deben aplicar exactamente las mismas reglas.
+**Context.** The system has non-trivial business rules (bidding, timing, closing) and two entry
+points (REST and SignalR) that must apply exactly the same rules.
 
-**Decisión.** Cuatro proyectos con dependencias en una sola dirección:
+**Decision.** Four projects with dependencies in a single direction:
 
 ```
 Api ──► Infrastructure ──► Application ──► Domain
 ```
 
-| Capa | Responsabilidad | No conoce |
+| Layer | Responsibility | Does not know about |
 |---|---|---|
-| Domain | Entidades y reglas (`Auction.PlaceBid`, `Close`, `Cancel`) | EF Core, HTTP, SignalR |
-| Application | Casos de uso, DTOs, puertos (`IAuctionNotifier`, `IApplicationDbContext`) | SQL Server, SignalR |
-| Infrastructure | EF Core + SQL Server, hash de contraseñas, JWT | HTTP |
-| Api | Controladores, Hub, worker, autenticación, middleware | — |
+| Domain | Entities and rules (`Auction.PlaceBid`, `Close`, `Cancel`) | EF Core, HTTP, SignalR |
+| Application | Use cases, DTOs, ports (`IAuctionNotifier`, `IApplicationDbContext`) | SQL Server, SignalR |
+| Infrastructure | EF Core + SQL Server, password hashing, JWT | HTTP |
+| Api | Controllers, hub, background worker, authentication, middleware | — |
 
-**¿Es adecuada para este tamaño?** Sí, sin exagerar: no hay CQRS, MediatR, AutoMapper ni
-repositorios genéricos. La separación paga por sí sola en dos lugares concretos:
+**Is it appropriate for this size?** Yes, without overdoing it: there is no CQRS, MediatR,
+AutoMapper or generic repositories. The separation pays off in two concrete places:
 
-- El **dominio se prueba sin base de datos** (25 pruebas de reglas en milisegundos).
-- **REST y SignalR reutilizan los mismos servicios**: el Hub no tiene reglas propias.
+- The **domain is tested without a database** (25 rule tests that run in milliseconds).
+- **REST and SignalR reuse the same services**: the hub has no rules of its own.
 
-## 2. EF Core visible en Application (sin repositorios genéricos)
+## 2. EF Core visible in Application (no generic repositories)
 
-**Decisión.** Application depende de `Microsoft.EntityFrameworkCore` y usa `DbSet<T>` a través
-de `IApplicationDbContext`.
+**Decision.** Application depends on `Microsoft.EntityFrameworkCore` and uses `DbSet<T>` through
+`IApplicationDbContext`.
 
-**Por qué.** `DbSet` ya es un repositorio y `SaveChanges` ya es una unidad de trabajo. Un
-`IRepository<T>` genérico encima solo esconde LINQ, impide proyecciones eficientes (`Select` a
-DTO en SQL) y obliga a filtrar abstracciones (`Include`, tracking) de todos modos.
+**Why.** `DbSet` already is a repository and `SaveChanges` already is a unit of work. A generic
+`IRepository<T>` on top only hides LINQ, prevents efficient projections (`Select` to a DTO in SQL)
+and leaks abstractions (`Include`, tracking) anyway.
 
-**Costo aceptado.** Cambiar de ORM tocaría Application. Es un escenario muy improbable y, si
-ocurriera, el dominio (lo valioso) no cambia.
+**Accepted cost.** Switching ORMs would touch Application. That is very unlikely and, if it
+happened, the domain (the valuable part) would not change.
 
-## 3. Concurrencia en las pujas: optimista con `rowversion` + reintento
+## 3. Bidding concurrency: optimistic with `rowversion` + retry
 
-**Problema.** Dos usuarios leen precio 100 y pujan 110 al mismo tiempo. Una implementación
-ingenua (leer → validar → guardar) acepta ambas.
+**Problem.** Two users read price 100 and bid 110 at the same time. A naive implementation
+(read → validate → save) accepts both.
 
-**Alternativas evaluadas:**
+**Alternatives evaluated:**
 
-| Opción | Cómo funciona | Ventajas | Limitaciones |
+| Option | How it works | Pros | Cons |
 |---|---|---|---|
-| **Optimista (`rowversion`)** ✅ | `UPDATE ... WHERE RowVersion = @leida`; si afecta 0 filas, otro ganó → reintentar | Sin bloqueos mientras se valida; alto throughput; nativo en EF Core | Bajo contención extrema hay reintentos (acotados a 5) |
-| Pesimista (`UPDLOCK, ROWLOCK`) | `SELECT ... WITH (UPDLOCK)` dentro de una transacción | Nunca hay conflicto | Serializa a TODOS los postores en la fila, aunque la mayoría vaya a ser rechazada; requiere SQL crudo; riesgo de bloqueos largos |
-| Transacción `SERIALIZABLE` | Bloqueos de rango | Garantía máxima | Interbloqueos (deadlocks) frecuentes con escrituras concurrentes; peor rendimiento |
-| Lock en memoria (`SemaphoreSlim`) | Exclusión mutua en el proceso | Simple | **Incorrecto con varias instancias**; no sobrevive a reinicios |
+| **Optimistic (`rowversion`)** ✅ | `UPDATE ... WHERE RowVersion = @read`; 0 rows affected means someone else won → retry | No locks while validating; high throughput; native in EF Core | Retries under extreme contention (bounded to 5) |
+| Pessimistic (`UPDLOCK, ROWLOCK`) | `SELECT ... WITH (UPDLOCK)` inside a transaction | Never conflicts | Serializes EVERY bidder on the row even though most will be rejected; needs raw SQL; risk of long blocking |
+| `SERIALIZABLE` transaction | Range locks | Strongest guarantee | Frequent deadlocks under concurrent writes; worse performance |
+| In-memory lock (`SemaphoreSlim`) | In-process mutual exclusion | Simple | **Wrong with several instances**; does not survive restarts |
 
-**Decisión.** Concurrencia optimista: `Auction.RowVersion` (`rowversion` de SQL Server) es token
-de concurrencia. El `UPDATE` de la subasta y el `INSERT` de la puja van en **una transacción**
-(un solo `SaveChanges`). Si hay conflicto, se descarta todo, se recarga y se revalida. El
-reintento normalmente termina en `BidTooLow`, que es el resultado correcto.
+**Decision.** Optimistic concurrency: `Auction.RowVersion` (SQL Server `rowversion`) is the
+concurrency token. The auction `UPDATE` and the bid `INSERT` run in **one transaction** (a single
+`SaveChanges`). On conflict everything is discarded, reloaded and revalidated. The retry usually ends
+in `BidTooLow`, which is the correct outcome.
 
-**Red de seguridad.** Índice único `(AuctionId, Amount)` en `Bids`: dos pujas del mismo monto
-en la misma subasta son imposibles a nivel de base de datos.
+**Safety net.** A unique index `(AuctionId, Amount)` on `Bids`: two bids with the same amount on the
+same auction are impossible at the database level.
 
-**Verificado por pruebas.** `ConcurrencyTests` dispara 20 pujas simultáneas contra SQL Server
-real y comprueba los invariantes: una sola aceptada para el mismo monto; precio = máximo de
-`Bids`; `BidCount` = filas; un evento por puja aceptada.
+**Verified by tests.** `ConcurrencyTests` fires 20 simultaneous bids against a real SQL Server and
+checks the invariants: only one accepted for the same amount; price = maximum of `Bids`;
+`BidCount` = rows; one event per accepted bid.
 
-## 4. El servidor es la fuente de verdad
+## 4. The server is the source of truth
 
-- El cliente **solo envía el monto**. El usuario sale del JWT (`sub`), el precio vigente de la
-  BD y la hora de `TimeProvider` del servidor.
-- Una puja se anuncia por SignalR **solo después** de que `SaveChanges` confirmó. Si SignalR
-  falla, la puja sigue siendo válida (se registra en el log); los clientes se resincronizan al
-  reconectar, porque `JoinAuction` devuelve el estado completo.
-- Pasada la hora de fin, `PlaceBid` rechaza (`AuctionEnded`) aunque el worker aún no haya cerrado
-  la subasta: la regla no depende de la frecuencia del worker.
+- The client **only sends the amount**. The user comes from the JWT (`sub`), the current price from
+  the database and the time from the server's `TimeProvider`.
+- A bid is announced through SignalR **only after** `SaveChanges` succeeded. If SignalR fails the bid
+  is still valid (it is logged); clients resynchronize on reconnect because `JoinAuction` returns the
+  full state.
+- After the end time, `PlaceBid` rejects (`AuctionEnded`) even if the worker has not closed the
+  auction yet: the rule does not depend on how often the worker runs.
 
-## 5. Cierre automático idempotente y tolerante a reinicios
+## 5. Idempotent, restart-tolerant automatic closing
 
-**Decisión.** Un `BackgroundService` con `PeriodicTimer` (2 s) busca en la BD subastas vencidas
-(índice `(Status, EndsAt)`) y las cierra.
+**Decision.** A `BackgroundService` with a `PeriodicTimer` (2 s) queries the database for expired
+auctions (index `(Status, EndsAt)`) and closes them.
 
-- **Sin temporizadores en memoria.** Si el servidor estuvo apagado, la primera pasada al
-  arrancar cierra todo lo pendiente (`Overdue_auctions_are_closed_after_a_restart`).
-- **Idempotente.** `Auction.Close()` no hace nada si ya está cerrada. El ganador es una sola
-  columna (`WinnerId`), así que no puede haber "dos ganadores". `rowversion` impide que dos
-  instancias cierren a la vez con resultados distintos (`Concurrent_closers_produce_a_single_winner...`
-  lanza 10 cerradores en paralelo: 1 éxito, 1 notificación).
-- **Ganador desde la tabla `Bids`** (fuente de verdad), no desde un valor en memoria.
+- **No in-memory timers.** If the server was down, the first pass on startup closes everything
+  overdue (`Overdue_auctions_are_closed_after_a_restart`).
+- **Idempotent.** `Auction.Close()` does nothing if the auction is already closed. The winner is a
+  single column (`WinnerId`), so there can never be "two winners". `rowversion` prevents two
+  instances from closing at the same time with different results
+  (`Concurrent_closers_produce_a_single_winner...` runs 10 closers in parallel: 1 success,
+  1 notification).
+- **The winner comes from the `Bids` table** (the source of truth), not from an in-memory value.
 
-**Alternativa descartada.** Programar un timer por subasta (`Task.Delay` hasta `EndsAt`): se
-pierde con cada reinicio y no escala a muchas subastas.
+**Rejected alternative.** One timer per auction (`Task.Delay` until `EndsAt`): it is lost on every
+restart and does not scale to many auctions.
 
-## 6. SignalR: grupos por subasta y Hub delgado
+## 6. SignalR: one group per auction and a thin hub
 
-- Grupo `auction-{id}` por subasta y grupo `lobby` para el catálogo. Nadie recibe eventos de
-  subastas a las que no se unió.
-- Hub **fuertemente tipado** (`Hub<IAuctionClient>`): los nombres de evento son métodos, no strings.
-- `JoinAuction` y `LeaveAuction` son públicos (ver es público); `PlaceBid` lleva `[Authorize]`.
-- Rechazos con `Clients.Caller`: solo quien pujó se entera.
-- El token JWT en WebSockets viaja en `?access_token=`, aceptado **solo** en `/hubs/auctions`.
-- **Límite consciente:** `ConnectionTracker` (conteo de espectadores) vive en memoria del proceso.
-  Con varias instancias se necesita un backplane (Redis o Azure SignalR Service). No se agregó
-  Redis porque hoy no existe esa necesidad.
+- Group `auction-{id}` per auction and a `lobby` group for the catalog. Nobody receives events from
+  auctions they did not join.
+- **Strongly typed** hub (`Hub<IAuctionClient>`): event names are methods, not strings.
+- `JoinAuction` and `LeaveAuction` are public (viewing is public); `PlaceBid` requires `[Authorize]`.
+- Rejections go through `Clients.Caller`: only the bidder is told.
+- The JWT travels as `?access_token=` for WebSockets and is accepted **only** on `/hubs/auctions`.
+- **Known limitation:** `ConnectionTracker` (viewer counts) lives in process memory. With several
+  instances a backplane is needed (Redis or Azure SignalR Service). Redis was not added because
+  there is no such need today.
 
-## 7. Autenticación y seguridad
+## 7. Authentication and security
 
-- Contraseñas con `PasswordHasher<T>` de ASP.NET Core Identity (PBKDF2-HMAC-SHA512, 100k
-  iteraciones, salt aleatorio), sin adoptar todo Identity.
-- JWT HMAC-SHA256 validando firma, emisor, audiencia y expiración. La clave **no está en el
-  repositorio**: User Secrets en desarrollo, variables de entorno en Docker y CI.
-- Política de respaldo (`FallbackPolicy`): todo endpoint exige autenticación salvo `[AllowAnonymous]`.
-- El registro público siempre crea `Bidder`; los administradores se crean por seed o configuración.
-- Rate limiting: global por IP, estricto en login/registro (fuerza bruta) y **por usuario para
-  pujas**, compartido entre REST y el Hub (el middleware HTTP no ve invocaciones del Hub).
-- CORS con orígenes explícitos y `AllowCredentials` (requerido por la negociación de SignalR).
-- Errores como ProblemDetails sin detalles internos; encabezados `nosniff`, `X-Frame-Options`.
+- Passwords hashed with ASP.NET Core Identity's `PasswordHasher<T>` (PBKDF2-HMAC-SHA512, 100k
+  iterations, random salt) without adopting the whole Identity stack.
+- HMAC-SHA256 JWT validating signature, issuer, audience and expiration. The key is **not in the
+  repository**: User Secrets in development, environment variables in Docker and CI.
+- Fallback policy: every endpoint requires authentication unless it is `[AllowAnonymous]`.
+- Public registration always creates a `Bidder`; administrators are created by seeding or
+  configuration.
+- Rate limiting: global per IP, strict on login/registration (brute force) and **per user for bids**,
+  shared between REST and the hub (the HTTP middleware does not see hub invocations).
+- CORS with explicit origins and `AllowCredentials` (required by SignalR negotiation).
+- Errors as ProblemDetails without internal details; `nosniff` and `X-Frame-Options` headers.
 
-**Compromiso en el frontend.** El JWT se guarda en `localStorage` por simplicidad. Riesgo: un
-XSS podría leerlo. Mitigación: todo texto de usuario se escapa antes de insertarse como HTML.
-Mejora futura: un BFF con cookie `HttpOnly`.
+**Frontend trade-off.** The JWT is stored in `localStorage` for simplicity. Risk: an XSS could read
+it. Mitigation: React escapes all rendered text and `dangerouslySetInnerHTML` is never used. Future
+improvement: a BFF with an `HttpOnly` cookie.
 
-## 8. Producto y subasta en la misma entidad
+## 8. Product and auction in the same entity
 
-En este dominio cada artículo se subasta una sola vez, así que `Product` y `Auction` serían 1:1.
-Se modelan juntos en `Auction` (título, descripción, imagen + reglas de la subasta). Si en el
-futuro un artículo pudiera re-subastarse, se extraería `Product` con una relación 1:N.
+In this domain each item is auctioned exactly once, so `Product` and `Auction` would be 1:1. They
+are modeled together in `Auction` (title, description, image + auction rules). If an item could be
+re-auctioned in the future, `Product` would be extracted with a 1:N relationship.
 
-## 9. Dinero y tiempo
+## 9. Money and time
 
-- `decimal(18,2)` siempre; nunca `float`/`double`. El dominio rechaza montos con más de 2 decimales.
-- `DateTimeOffset` en UTC y `TimeProvider` inyectado en todo el código: las pruebas controlan el
-  reloj (adelantar 1 hora para simular un reinicio, por ejemplo).
+- Always `decimal(18,2)`, never `float`/`double`. The domain rejects amounts with more than two
+  decimals.
+- `DateTimeOffset` in UTC and an injected `TimeProvider` everywhere: tests control the clock
+  (for example, moving it forward one hour to simulate a restart).

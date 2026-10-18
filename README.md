@@ -4,46 +4,45 @@
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4)
 ![SignalR](https://img.shields.io/badge/SignalR-WebSockets-0A7BBB)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-EF%20Core%2010-CC2927)
-![Tests](https://img.shields.io/badge/pruebas-71-success)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-Plataforma de **subastas en tiempo real**: los usuarios pujan y todos los conectados ven el precio
-cambiar al instante, sin recargar. El servidor valida cada oferta, resuelve la **concurrencia**
-entre postores simultáneos y cierra cada subasta a su hora, de forma **idempotente**, aunque el
-servidor se haya reiniciado.
+A **real-time auction platform**: users place bids and everyone connected sees the price change
+instantly, without reloading. The server validates every bid, resolves **concurrency** between
+simultaneous bidders, and closes each auction on time, **idempotently**, even after a restart.
 
 > 🖥️ **Frontend:** [edu-tech220/live-auction-web](https://github.com/edu-tech220/live-auction-web) — React 19 + TypeScript + Vite + TanStack Query + SignalR.
 
-![Subasta en vivo](docs/images/subasta-en-vivo.png)
+![Live bidding](docs/images/live-bidding.png)
 
-## Lo interesante de este proyecto
+## Highlights
 
-- **Pujas concurrentes correctas.** Concurrencia optimista con `rowversion` y reintentos, más un
-  índice único como red de seguridad. Probado con 20 postores simultáneos contra SQL Server real.
-- **El servidor es la fuente de verdad.** El cliente solo manda el monto: el usuario sale del JWT,
-  el precio de la BD y la hora del servidor. Un evento de SignalR se emite **solo después** de que
-  la puja se guardó.
-- **Cierre automático idempotente.** Un `BackgroundService` cierra las subastas vencidas. Con 10
-  cerradores en paralelo hay exactamente un ganador y una notificación, y tras un reinicio cierra
-  todo lo pendiente.
-- **SignalR bien usado.** Hub fuertemente tipado, un grupo por subasta, rechazos solo para quien
-  pujó, conteo de espectadores y resincronización al reconectar.
-- **Seguridad.** PBKDF2, JWT validado por completo, política de autorización por defecto, rate
-  limiting por IP y por usuario (también dentro del Hub), CORS explícito y sin secretos en el repo.
-- **Calidad.** 71 pruebas (unitarias e integración con SQL Server y clientes SignalR reales), CI
-  en GitHub Actions con smoke test de Docker Compose, y warnings tratados como errores.
+- **Correct concurrent bidding.** Optimistic concurrency with `rowversion` and retries, plus a unique
+  index as a safety net. Tested with 20 simultaneous bidders against a real SQL Server.
+- **The server is the source of truth.** The client only sends the amount: the user comes from the
+  JWT, the current price from the database and the time from the server. A SignalR event is emitted
+  **only after** the bid has been persisted.
+- **Idempotent automatic closing.** A `BackgroundService` closes expired auctions. With 10 closers
+  running in parallel there is exactly one winner and one notification, and after a restart every
+  overdue auction is closed.
+- **SignalR done right.** Strongly typed hub, one group per auction, rejections sent only to the
+  bidder, viewer counts and resynchronization on reconnect.
+- **Security.** PBKDF2 password hashing, fully validated JWT, default authorization policy, rate
+  limiting per IP and per user (inside the hub too), explicit CORS and no secrets in the repository.
+- **Quality.** 71 tests (unit and integration with a real SQL Server and real SignalR clients),
+  GitHub Actions CI with a Docker Compose smoke test, and warnings treated as errors.
 
-## Arquitectura
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Cliente["Frontend React (live-auction-web)"]
-        UI[Páginas] -->|REST + JWT| REST
+    subgraph Client["React frontend (live-auction-web)"]
+        UI[Pages] -->|REST + JWT| REST
         UI <-->|WebSocket + JWT| HUB
     end
 
     subgraph Api["LiveAuction.Api"]
         REST[Controllers]
-        HUB[AuctionHub<br/>grupos por subasta]
+        HUB[AuctionHub<br/>one group per auction]
         W[AuctionLifecycleWorker<br/>PeriodicTimer]
         N[SignalRAuctionNotifier]
     end
@@ -54,7 +53,7 @@ flowchart LR
     end
 
     subgraph Dom["LiveAuction.Domain"]
-        D[Auction · Bid · User<br/>reglas de negocio]
+        D[Auction · Bid · User<br/>business rules]
     end
 
     subgraph Infra["LiveAuction.Infrastructure"]
@@ -67,17 +66,17 @@ flowchart LR
     W --> S
     S --> D
     S --> P
-    P -.implementa.-> N
-    P -.implementa.-> EF
+    P -.implements.-> N
+    P -.implements.-> EF
     N --> HUB
     EF --> DB[(SQL Server)]
 ```
 
-Las dependencias van en una sola dirección (`Api → Infrastructure → Application → Domain`).
-REST, SignalR y el worker **comparten los mismos servicios**: no hay reglas duplicadas.
-Detalle y alternativas evaluadas en [docs/decisions.md](docs/decisions.md).
+Dependencies point in one direction (`Api → Infrastructure → Application → Domain`). REST, SignalR
+and the background worker **share the same services**, so no rule is duplicated. Rationale and the
+alternatives that were evaluated are in [docs/decisions.md](docs/decisions.md).
 
-### Flujo de una puja con concurrencia
+### A concurrent bid, step by step
 
 ```mermaid
 sequenceDiagram
@@ -85,144 +84,148 @@ sequenceDiagram
     participant L as Luis
     participant S as BidService
     participant DB as SQL Server
-    participant G as Grupo SignalR
+    participant G as SignalR group
 
-    par Pujan al mismo tiempo con precio 100
+    par Both bid at the same time with price 100
         A->>S: PlaceBid(110)
         L->>S: PlaceBid(110)
     end
     S->>DB: UPDATE Auctions ... WHERE RowVersion = v1 + INSERT Bid (Ana)
-    DB-->>S: 1 fila ✔ (RowVersion → v2)
+    DB-->>S: 1 row ✔ (RowVersion → v2)
     S->>G: BidPlaced(110, Ana)
     S->>DB: UPDATE Auctions ... WHERE RowVersion = v1 + INSERT Bid (Luis)
-    DB-->>S: 0 filas ✖ DbUpdateConcurrencyException (rollback)
-    S->>DB: Recargar (precio 110, v2) y revalidar
-    S-->>L: BidTooLow: la oferta mínima es 120
+    DB-->>S: 0 rows ✖ DbUpdateConcurrencyException (rollback)
+    S->>DB: Reload (price 110, v2) and revalidate
+    S-->>L: BidTooLow: the minimum bid is 120
 ```
 
-## Stack
+## Tech stack
 
-| Área | Tecnología |
+| Area | Technology |
 |---|---|
 | Backend | C# 14, ASP.NET Core 10 (Web API), SignalR |
-| Datos | Entity Framework Core 10 (Code First), SQL Server 2022 |
-| Seguridad | JWT Bearer, PasswordHasher (PBKDF2), Rate Limiting, CORS |
-| Frontend | React 19, TypeScript, Vite, TanStack Query, Tailwind, `@microsoft/signalr` ([repo aparte](https://github.com/edu-tech220/live-auction-web)) |
-| Pruebas | xUnit, WebApplicationFactory, SignalR .NET Client, FakeTimeProvider |
+| Data | Entity Framework Core 10 (Code First), SQL Server 2022 |
+| Security | JWT Bearer, PasswordHasher (PBKDF2), rate limiting, CORS |
+| Frontend | React 19, TypeScript, Vite, TanStack Query, Tailwind, `@microsoft/signalr` ([separate repo](https://github.com/edu-tech220/live-auction-web)) |
+| Tests | xUnit, WebApplicationFactory, SignalR .NET client, FakeTimeProvider |
 | DevOps | Docker, Docker Compose, GitHub Actions |
 
-## Ejecutar con Docker (recomendado)
+## Run with Docker (recommended)
 
 ```bash
-cp .env.example .env        # y cambia los valores
+cp .env.example .env        # then change the values
 docker compose up --build
 ```
 
-| Servicio | URL |
+| Service | URL |
 |---|---|
-| Frontend (React, construido desde su repo) | http://localhost:8080 |
+| Frontend (React, built from its own repo) | http://localhost:8080 |
 | API + Swagger | http://localhost:5080/swagger |
 | Health check | http://localhost:5080/health |
 
-Se crean el administrador del `.env` y, si defines `DEMO_PASSWORD`, los postores `ana@demo.local` y
-`luis@demo.local` con subastas de ejemplo. Abre dos navegadores (uno normal y uno en incógnito),
-entra con cada usuario a la misma subasta y puja.
+The admin from `.env` is created on startup and, if `DEMO_PASSWORD` is set, two demo bidders
+(`ana@demo.local`, `luis@demo.local`) and sample auctions. Open two browsers (one regular, one
+incognito), sign in as each user, open the same auction and bid.
 
-## Ejecutar en local (sin Docker)
+## Run locally (without Docker)
 
-Requisitos: .NET SDK 10 y SQL Server (Express sirve) en `.\SQLEXPRESS`.
+Requirements: .NET SDK 10 and SQL Server (Express works) at `.\SQLEXPRESS`.
 
 ```powershell
-# 1. Secretos de desarrollo (no se guardan en el repo)
-dotnet user-secrets set "Jwt:SigningKey" "<clave-aleatoria-de-32+-caracteres>" --project src/LiveAuction.Api
-dotnet user-secrets set "Database:Seed:AdminPassword" "<contraseña-admin>" --project src/LiveAuction.Api
-dotnet user-secrets set "Database:Seed:DemoPassword" "<contraseña-demo>" --project src/LiveAuction.Api
+# 1. Development secrets (never committed)
+dotnet user-secrets set "Jwt:SigningKey" "<random-key-with-32+-characters>" --project src/LiveAuction.Api
+dotnet user-secrets set "Database:Seed:AdminPassword" "<admin-password>" --project src/LiveAuction.Api
+dotnet user-secrets set "Database:Seed:DemoPassword" "<demo-password>" --project src/LiveAuction.Api
 
-# 2. API (aplica migraciones y crea datos demo al arrancar en Development)
+# 2. API (applies migrations and seeds demo data on startup in Development)
 dotnet run --project src/LiveAuction.Api --launch-profile http    # http://localhost:5080/swagger
 
-# 3. Frontend (otro repositorio)
+# 3. Frontend (separate repository)
 git clone https://github.com/edu-tech220/live-auction-web
 cd live-auction-web && npm install && npm run dev                  # http://localhost:5173
 ```
 
-Administrador local: `admin@liveauction.local` con la contraseña que configuraste.
+Local admin: `admin@liveauction.local` with the password you configured.
 
-## API REST
+## REST API
 
-| Método | Ruta | Acceso | Descripción |
+| Method | Route | Access | Description |
 |---|---|---|---|
-| POST | `/api/auth/register` | Público | Registro (siempre rol `Bidder`) → JWT |
-| POST | `/api/auth/login` | Público | Inicio de sesión → JWT |
-| GET | `/api/auth/me` | Usuario | Perfil propio |
-| GET | `/api/auctions?status=&search=&page=&pageSize=` | Público | Catálogo paginado |
-| GET | `/api/auctions/{id}` | Público | Detalle + `minimumNextBid` + `serverTime` |
-| POST | `/api/auctions` | Admin | Crear subasta |
-| PUT | `/api/auctions/{id}` | Admin | Editar (solo programada y sin ofertas) |
-| POST | `/api/auctions/{id}/cancel` | Admin | Cancelar |
-| GET | `/api/auctions/{id}/bids` | Público | Historial (nombres visibles, nunca correos) |
-| POST | `/api/auctions/{id}/bids` | Usuario | Pujar (alternativa REST al Hub) |
-| GET | `/api/me/bids` | Usuario | Mis pujas |
-| GET | `/health` | Público | Estado de la API y la BD |
+| POST | `/api/auth/register` | Public | Sign up (always the `Bidder` role) → JWT |
+| POST | `/api/auth/login` | Public | Sign in → JWT |
+| GET | `/api/auth/me` | User | Own profile |
+| GET | `/api/auctions?status=&search=&page=&pageSize=` | Public | Paged catalog |
+| GET | `/api/auctions/{id}` | Public | Details + `minimumNextBid` + `serverTime` |
+| POST | `/api/auctions` | Admin | Create an auction |
+| PUT | `/api/auctions/{id}` | Admin | Edit (only while scheduled and without bids) |
+| POST | `/api/auctions/{id}/cancel` | Admin | Cancel |
+| GET | `/api/auctions/{id}/bids` | Public | Bid history (display names, never emails) |
+| POST | `/api/auctions/{id}/bids` | User | Place a bid (REST alternative to the hub) |
+| GET | `/api/me/bids` | User | My bids |
+| GET | `/health` | Public | API and database status |
 
-Los errores son **ProblemDetails** (RFC 9457) con un `code` estable: `BidTooLow`, `AuctionEnded`,
-`AlreadyHighestBidder`, `SellerCannotBid`, `AuctionNotStarted`, `TooManyBids`…
+Errors are **ProblemDetails** (RFC 9457) with a stable `code`: `BidTooLow`, `AuctionEnded`,
+`AlreadyHighestBidder`, `SellerCannotBid`, `AuctionNotStarted`, `TooManyBids`, ...
 
 ## SignalR — `/hubs/auctions`
 
-| Dirección | Nombre | Descripción |
+| Direction | Name | Description |
 |---|---|---|
-| Cliente → servidor | `JoinAuction(id)` | Se une al grupo y devuelve el estado actual (resincroniza) |
-| Cliente → servidor | `LeaveAuction(id)` | Sale del grupo |
-| Cliente → servidor | `JoinLobby()` | Recibe cambios de todas las subastas (catálogo) |
-| Cliente → servidor | `PlaceBid(id, amount)` 🔒 | Puja; devuelve `BidOutcome` |
-| Servidor → grupo | `BidPlaced` | Nueva puja confirmada (incluye `bidCount` como secuencia) |
-| Servidor → quien pujó | `BidRejected` | Motivo del rechazo, solo para el invocador |
-| Servidor → grupo | `ViewersChanged` | Número de personas viendo |
-| Servidor → grupo | `AuctionStatusChanged` | Activada o cancelada |
-| Servidor → grupo | `AuctionFinished` | Ganador y precio final (o sin ganador) |
+| Client → server | `JoinAuction(id)` | Joins the group and returns the current state (resync) |
+| Client → server | `LeaveAuction(id)` | Leaves the group |
+| Client → server | `JoinLobby()` | Receives changes from every auction (catalog) |
+| Client → server | `PlaceBid(id, amount)` 🔒 | Places a bid; returns a `BidOutcome` |
+| Server → group | `BidPlaced` | A confirmed bid (`bidCount` acts as a sequence number) |
+| Server → caller | `BidRejected` | Rejection reason, sent only to the bidder |
+| Server → group | `ViewersChanged` | Number of people watching |
+| Server → group | `AuctionStatusChanged` | Activated or cancelled |
+| Server → group | `AuctionFinished` | Winner and final price (or no winner) |
 
-## Pruebas
+## Tests
 
 ```bash
-dotnet test        # 71 pruebas
+dotnet test        # 71 tests
 ```
 
-| Suite | Qué cubre |
+| Suite | Coverage |
 |---|---|
-| **Unitarias (33)** | Reglas de `Auction` (montos, tiempos, vendedor, cierre idempotente), `ConnectionTracker` (también bajo concurrencia), JWT y hash de contraseñas |
-| **Integración (38)** | API completa con `WebApplicationFactory` contra **SQL Server real** y reloj controlable: auth y seguridad, administración, pujas, **20 postores simultáneos**, **10 cerradores en paralelo**, recuperación tras reinicio y **clientes SignalR reales** (grupos, rechazos al invocador, espectadores, resultado final) |
+| **Unit (33)** | `Auction` rules (amounts, timing, seller, idempotent close), `ConnectionTracker` (including under concurrency), JWT and password hashing |
+| **Integration (38)** | The full API with `WebApplicationFactory` against a **real SQL Server** and a controllable clock: auth and security, administration, bidding, **20 simultaneous bidders**, **10 parallel closers**, recovery after a restart and **real SignalR clients** (groups, caller-only rejections, viewers, final result) |
 
-Las pruebas de integración usan `.\SQLEXPRESS` en local o la variable `LIVEAUCTION_TEST_CONNECTION`
-(así corren en CI contra SQL Server en contenedor).
+Integration tests use `.\SQLEXPRESS` locally or the `LIVEAUCTION_TEST_CONNECTION` environment
+variable (that is how CI runs them against a SQL Server container).
 
-## Estructura
+## Project structure
 
 ```
 src/
-  LiveAuction.Domain/          Entidades y reglas (Auction, Bid, User, Result/Error)
-  LiveAuction.Application/     Casos de uso, DTOs, puertos, ConnectionTracker
-  LiveAuction.Infrastructure/  EF Core, migraciones, PasswordHasher, JWT, seed
-  LiveAuction.Api/             Controllers, AuctionHub, worker, seguridad, Dockerfile
+  LiveAuction.Domain/          Entities and rules (Auction, Bid, User, Result/Error)
+  LiveAuction.Application/     Use cases, DTOs, ports, ConnectionTracker
+  LiveAuction.Infrastructure/  EF Core, migrations, PasswordHasher, JWT, seeding
+  LiveAuction.Api/             Controllers, AuctionHub, worker, security, Dockerfile
 tests/
   LiveAuction.UnitTests/
   LiveAuction.IntegrationTests/
-docs/decisions.md              Decisiones técnicas y alternativas evaluadas
+docs/decisions.md              Technical decisions and the alternatives evaluated
 ```
 
-## Capturas
+## Screenshots
 
-| Catálogo en vivo | Resultado final |
+| Live catalog | Final result |
 |---|---|
-| ![Catálogo](docs/images/catalogo.png) | ![Finalizada](docs/images/subasta-finalizada.png) |
+| ![Catalog](docs/images/catalog.png) | ![Finished](docs/images/finished.png) |
 
-| Administración | Móvil |
+| Administration | Mobile |
 |---|---|
-| ![Admin](docs/images/admin.png) | ![Móvil](docs/images/movil.png) |
+| ![Admin](docs/images/admin.png) | ![Mobile](docs/images/mobile.png) |
 
-## Próximos pasos
+## Next steps
 
-- Backplane de SignalR (Redis) para escalar a varias instancias.
-- Anti-sniping: extender el cierre unos segundos si llega una puja al final.
-- Refresh tokens y cookie `HttpOnly` mediante un BFF.
-- Pruebas de carga (k6) sobre el endpoint de pujas.
+- SignalR backplane (Redis) to scale out to several instances.
+- Anti-sniping: extend the closing time by a few seconds when a bid arrives at the end.
+- Refresh tokens and an `HttpOnly` cookie through a BFF.
+- Load testing (k6) on the bidding endpoint.
+
+## License
+
+[MIT](LICENSE)
