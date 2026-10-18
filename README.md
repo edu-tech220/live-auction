@@ -11,6 +11,8 @@ cambiar al instante, sin recargar. El servidor valida cada oferta, resuelve la *
 entre postores simultáneos y cierra cada subasta a su hora, de forma **idempotente**, aunque el
 servidor se haya reiniciado.
 
+> 🖥️ **Frontend:** [edu-tech220/live-auction-web](https://github.com/edu-tech220/live-auction-web) — React 19 + TypeScript + Vite + TanStack Query + SignalR.
+
 ![Subasta en vivo](docs/images/subasta-en-vivo.png)
 
 ## Lo interesante de este proyecto
@@ -34,7 +36,7 @@ servidor se haya reiniciado.
 
 ```mermaid
 flowchart LR
-    subgraph Cliente["Frontend (HTML/CSS/JS)"]
+    subgraph Cliente["Frontend React (live-auction-web)"]
         UI[Páginas] -->|REST + JWT| REST
         UI <-->|WebSocket + JWT| HUB
     end
@@ -105,7 +107,7 @@ sequenceDiagram
 | Backend | C# 14, ASP.NET Core 10 (Web API), SignalR |
 | Datos | Entity Framework Core 10 (Code First), SQL Server 2022 |
 | Seguridad | JWT Bearer, PasswordHasher (PBKDF2), Rate Limiting, CORS |
-| Frontend | HTML, CSS, JavaScript (ES modules), `@microsoft/signalr` |
+| Frontend | React 19, TypeScript, Vite, TanStack Query, Tailwind, `@microsoft/signalr` ([repo aparte](https://github.com/edu-tech220/live-auction-web)) |
 | Pruebas | xUnit, WebApplicationFactory, SignalR .NET Client, FakeTimeProvider |
 | DevOps | Docker, Docker Compose, GitHub Actions |
 
@@ -118,7 +120,7 @@ docker compose up --build
 
 | Servicio | URL |
 |---|---|
-| Frontend | http://localhost:8080 |
+| Frontend (React, construido desde su repo) | http://localhost:8080 |
 | API + Swagger | http://localhost:5080/swagger |
 | Health check | http://localhost:5080/health |
 
@@ -139,9 +141,9 @@ dotnet user-secrets set "Database:Seed:DemoPassword" "<contraseña-demo>" --proj
 # 2. API (aplica migraciones y crea datos demo al arrancar en Development)
 dotnet run --project src/LiveAuction.Api --launch-profile http    # http://localhost:5080/swagger
 
-# 3. Frontend (cualquier servidor estático en el puerto 5500)
-cd frontend
-python -m http.server 5500                                         # http://localhost:5500
+# 3. Frontend (otro repositorio)
+git clone https://github.com/edu-tech220/live-auction-web
+cd live-auction-web && npm install && npm run dev                  # http://localhost:5173
 ```
 
 Administrador local: `admin@liveauction.local` con la contraseña que configuraste.
@@ -205,7 +207,6 @@ src/
 tests/
   LiveAuction.UnitTests/
   LiveAuction.IntegrationTests/
-frontend/                      HTML + CSS + JS (independiente), Dockerfile (Nginx)
 docs/decisions.md              Decisiones técnicas y alternativas evaluadas
 ```
 

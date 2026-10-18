@@ -43,9 +43,12 @@ services:
     ports:
       - "5080:8080"
 
+  # Frontend React (repo independiente): Compose lo construye directo desde GitHub.
   frontend:
     build:
-      context: ./frontend
+      context: https://github.com/edu-tech220/live-auction-web.git#main
+      args:
+        VITE_API_URL: http://localhost:5080
     depends_on:
       - api
     ports:
